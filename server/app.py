@@ -59,7 +59,7 @@ if not secret_key:
 app.config.update(
     SECRET_KEY=secret_key,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SAMESITE="None" if os.environ.get("TRUSTVAULT_HTTPS", "0") == "1" else "Lax",
     SESSION_COOKIE_SECURE=os.environ.get("TRUSTVAULT_HTTPS", "0") == "1",
     MAX_CONTENT_LENGTH=10 * 1024 * 1024,
 )
