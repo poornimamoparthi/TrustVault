@@ -64,10 +64,14 @@ app.config.update(
     MAX_CONTENT_LENGTH=10 * 1024 * 1024,
 )
 
+
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:5174",
+    "https://trust-vault-five-beta.vercel.app",
+    "https://trust-vault-6ivgozj9b-poornimamoparthi.vercel.app",
 ]
+
 
 ALLOWED_EXTENSIONS = {
     ".pdf", ".txt", ".doc", ".docx",
