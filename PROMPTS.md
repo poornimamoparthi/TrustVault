@@ -1,4 +1,4 @@
-# TrustVault – AI Prompts and Development Notes
+﻿# TrustVault - AI Prompts and Development Notes
 
 This document records the prompts and development guidance used while building TrustVault.
 
@@ -25,3 +25,4 @@ This document records the prompts and development guidance used while building T
 
 ## Development Note
 These prompts document the development goals and guidance for the project. The implementation should be tested before deployment, and all credentials, API keys, and environment files must remain private.
+
