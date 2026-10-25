@@ -84,29 +84,6 @@ The frontend and backend require separate production configuration. Add the veri
 
 ## License
 Follow the license requirements specified by the project challenge.
-## Application Workflow
-
-```mermaid
-flowchart TD
-    A([Open TrustVault]) --> B{Have an account?}
-    B -- No --> C[Register]
-    B -- Yes --> D[Login]
-    C --> D
-    D --> E{Credentials valid?}
-    E -- No --> F[Show error]
-    F --> D
-    E -- Yes --> G[Check user role]
-    G --> H[Open dashboard]
-    H --> I[Upload document]
-    H --> J[View or download permitted documents]
-    H --> K[Forgot password]
-    K --> L[Request reset email]
-    L --> M[Validate reset token]
-    M --> N[Set new password]
-    N --> D
-```
-
-
 
 
 
