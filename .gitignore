@@ -49,3 +49,7 @@ server/trustvault.db-*
 
 # Uploaded private documents
 server/storage/
+
+# Ignore database files and backups
+*.db
+*.db-*

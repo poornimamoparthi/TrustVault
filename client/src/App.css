@@ -562,3 +562,79 @@ button:disabled {
   border-radius: 3px;
 }
 
+.share-panel {
+  width: 100%;
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-color, #d9deea);
+  border-radius: 12px;
+  background: var(--panel-bg, #f8f9fc);
+}
+
+.share-panel h4 {
+  margin: 0 0 12px;
+}
+
+.share-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.share-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.share-form input,
+.share-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #cbd2df;
+  border-radius: 8px;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+}
+
+.share-list {
+  display: grid;
+  gap: 10px;
+}
+
+.share-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e0e5ee;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.share-item > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.share-item span {
+  color: #5b6578;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 600px) {
+  .share-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .share-item button {
+    width: 100%;
+  }
+}

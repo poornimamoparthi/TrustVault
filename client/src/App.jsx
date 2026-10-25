@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
-const API = "http://localhost:5000";
+const API = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
 
 function App() {
   const initialResetToken =
@@ -21,6 +21,11 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [file, setFile] = useState(null);
+  const [documentTitle, setDocumentTitle] = useState("");
+  const [shareDocumentId, setShareDocumentId] = useState(null);
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareAccessLevel, setShareAccessLevel] = useState("read");
+  const [documentShares, setDocumentShares] = useState({});
 
   async function refreshCsrf() {
     const response = await fetch(`${API}/api/csrf`, {
@@ -301,6 +306,7 @@ function App() {
       const formData = new FormData();
 
       formData.append("file", file);
+      formData.append("title", documentTitle.trim());
 
       const response = await fetch(`${API}/api/documents`, {
         method: "POST",
@@ -324,6 +330,90 @@ function App() {
       setMessage(error.message || "Upload failed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function loadDocumentShares(documentId) {
+    try {
+      const response = await fetch(
+        `${API}/api/documents/${documentId}/share`,
+        { credentials: "include" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not load sharing permissions.");
+      }
+
+      setDocumentShares((current) => ({
+        ...current,
+        [documentId]: data.shares || [],
+      }));
+    } catch (error) {
+      setMessage(error.message || "Could not load sharing permissions.");
+    }
+  }
+
+  async function handleShareDocument(event, documentId) {
+    event.preventDefault();
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `${API}/api/documents/${documentId}/share`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
+          body: JSON.stringify({
+            email: shareEmail,
+            access_level: shareAccessLevel,
+          }),
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not share document.");
+      }
+
+      setMessage(data.message || "Document access updated.");
+      setShareEmail("");
+      await loadDocumentShares(documentId);
+      await loadDocuments();
+    } catch (error) {
+      setMessage(error.message || "Could not share document.");
+    }
+  }
+
+  async function handleRevokeAccess(documentId, targetUserId) {
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `${API}/api/documents/${documentId}/share/${targetUserId}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+          headers: {
+            "X-CSRF-Token": csrfToken,
+          },
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not revoke access.");
+      }
+
+      setMessage(data.message || "Document access revoked.");
+      await loadDocumentShares(documentId);
+      await loadDocuments();
+    } catch (error) {
+      setMessage(error.message || "Could not revoke access.");
     }
   }
 
@@ -693,6 +783,17 @@ function App() {
                 className="upload-form"
                 onSubmit={handleUpload}
               >
+                <label>
+                  Document title
+                  <input
+                    type="text"
+                    value={documentTitle}
+                    onChange={(e) => setDocumentTitle(e.target.value)}
+                    maxLength={150}
+                    placeholder="Enter document title"
+                    required
+                  />
+                </label>
                 <input
                   type="file"
                   accept=".pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
@@ -722,7 +823,8 @@ function App() {
               ) : (
                 <div className="document-list">
                   {documents.map((doc) => (
-                    <div className="document-row" key={doc.id}>
+                    <div className="document-entry" key={doc.id}>
+                      <div className="document-row">
                       <div className="document-icon">FILE</div>
 
                       <div className="document-info">
@@ -734,6 +836,11 @@ function App() {
                         </strong>
                         <span>
                           {doc.created_at || "Stored securely"}
+                        </span>
+                        <span>
+                          {doc.is_owner
+                            ? "Owned by you"
+                            : `Shared ? ${doc.access_level === "edit" ? "Edit" : "Read"} access`}
                         </span>
                       </div>
 
@@ -750,6 +857,111 @@ function App() {
                       >
                         Download
                       </button>
+
+                      {doc.is_owner && (
+                        <button
+                          className="secondary-btn"
+                          type="button"
+                          onClick={() => {
+                            const opening = shareDocumentId !== doc.id;
+                            setShareDocumentId(opening ? doc.id : null);
+                            if (opening) {
+                              loadDocumentShares(doc.id);
+                            }
+                          }}
+                        >
+                          {shareDocumentId === doc.id
+                            ? "Close sharing"
+                            : "Manage sharing"}
+                        </button>
+                      )}
+                    </div>
+
+                    {doc.is_owner && shareDocumentId === doc.id && (
+                      <div className="share-panel">
+                        <h4>Share this document</h4>
+
+                        <form
+                          className="share-form"
+                          onSubmit={(event) =>
+                            handleShareDocument(event, doc.id)
+                          }
+                        >
+                          <label>
+                            Recipient email
+                            <input
+                              type="email"
+                              value={shareEmail}
+                              onChange={(event) =>
+                                setShareEmail(event.target.value)
+                              }
+                              placeholder="registered-user@example.com"
+                              required
+                            />
+                          </label>
+
+                          <label>
+                            Permission
+                            <select
+                              value={shareAccessLevel}
+                              onChange={(event) =>
+                                setShareAccessLevel(event.target.value)
+                              }
+                            >
+                              <option value="read">Read only</option>
+                              <option value="edit">Read and edit</option>
+                            </select>
+                          </label>
+
+                          <button
+                            className="primary-btn"
+                            type="submit"
+                            disabled={busy || !shareEmail.trim()}
+                          >
+                            Share document
+                          </button>
+                        </form>
+
+                        <h4>People with access</h4>
+
+                        {(documentShares[doc.id] || []).length === 0 ? (
+                          <p className="empty-state">
+                            No one else has access to this document yet.
+                          </p>
+                        ) : (
+                          <div className="share-list">
+                            {documentShares[doc.id].map((share) => (
+                              <div
+                                className="share-item"
+                                key={share.user_id}
+                              >
+                                <div>
+                                  <strong>{share.email}</strong>
+                                  <span>
+                                    {share.access_level === "edit"
+                                      ? "Read and edit"
+                                      : "Read only"}
+                                  </span>
+                                </div>
+
+                                <button
+                                  className="secondary-btn"
+                                  type="button"
+                                  onClick={() =>
+                                    handleRevokeAccess(
+                                      doc.id,
+                                      share.user_id
+                                    )
+                                  }
+                                >
+                                  Revoke access
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     </div>
                   ))}
                 </div>

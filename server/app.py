@@ -49,11 +49,15 @@ def send_reset_email(recipient_email, reset_link):
 
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
+secret_key = os.environ.get("TRUSTVAULT_SECRET_KEY", "").strip()
+if not secret_key:
+    raise RuntimeError(
+        "TRUSTVAULT_SECRET_KEY must be configured in server/.env "
+        "or the deployment environment."
+    )
+
 app.config.update(
-    SECRET_KEY=os.environ.get(
-        "TRUSTVAULT_SECRET_KEY",
-        "local-development-only-change-before-deployment",
-    ),
+    SECRET_KEY=secret_key,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("TRUSTVAULT_HTTPS", "0") == "1",
@@ -162,6 +166,51 @@ def write_audit_log(
             entry_hash,
         ),
     )
+
+def verify_audit_chain(connection):
+    """Verify audit record hashes and links between records."""
+
+    rows = connection.execute(
+        """
+        SELECT id, actor_id, action, document_id, target_user_id,
+               outcome, details, previous_hash, entry_hash
+        FROM audit_logs
+        ORDER BY id ASC
+        """
+    ).fetchall()
+
+    expected_previous_hash = None
+
+    for row in rows:
+        if row["previous_hash"] != expected_previous_hash:
+            return False, row["id"]
+
+        record = {
+            "actor_id": row["actor_id"],
+            "action": row["action"],
+            "document_id": row["document_id"],
+            "target_user_id": row["target_user_id"],
+            "outcome": row["outcome"],
+            "details": row["details"],
+            "previous_hash": row["previous_hash"],
+        }
+
+        canonical_record = json.dumps(
+            record,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        calculated_hash = hashlib.sha256(
+            canonical_record.encode("utf-8")
+        ).hexdigest()
+
+        if calculated_hash != row["entry_hash"]:
+            return False, row["id"]
+
+        expected_previous_hash = row["entry_hash"]
+
+    return True, None
 
 
 # ---------------- HELPERS ----------------
@@ -419,8 +468,12 @@ def forgot_password():
         connection.close()
 
     if user:
+        frontend_url = os.environ.get(
+            "TRUSTVAULT_FRONTEND_URL",
+            "http://localhost:5173",
+        ).strip().rstrip("/")
         reset_link = (
-            "http://localhost:5173/?reset_token=" + raw_token
+            f"{frontend_url}/?reset_token={raw_token}"
         )
 
         try:
@@ -722,30 +775,41 @@ def upload_document():
 @login_required
 def list_documents():
     connection = get_db()
+    user_id = int(session["user_id"])
 
     try:
         rows = connection.execute(
             """
             SELECT
-                id,
-                title,
-                category,
-                original_filename,
-                content_type,
-                file_size,
-                sha256,
-                created_at
-            FROM documents
-            WHERE owner_id = ?
-            ORDER BY created_at DESC, id DESC
+                d.id,
+                d.owner_id,
+                d.title,
+                d.category,
+                d.original_filename,
+                d.content_type,
+                d.file_size,
+                d.sha256,
+                d.created_at,
+                CASE
+                    WHEN d.owner_id = ? THEN 'owner'
+                    ELSE p.access_level
+                END AS access_level
+            FROM documents AS d
+            LEFT JOIN document_permissions AS p
+                ON p.document_id = d.id
+               AND p.user_id = ?
+            WHERE d.owner_id = ?
+               OR p.user_id = ?
+            ORDER BY d.created_at DESC, d.id DESC
             """,
-            (session["user_id"],),
+            (user_id, user_id, user_id, user_id),
         ).fetchall()
 
         return jsonify({
             "documents": [
                 {
                     "id": row["id"],
+                    "owner_id": row["owner_id"],
                     "title": row["title"],
                     "category": row["category"],
                     "filename": row["original_filename"],
@@ -753,6 +817,8 @@ def list_documents():
                     "file_size": row["file_size"],
                     "sha256": row["sha256"],
                     "created_at": row["created_at"],
+                    "access_level": row["access_level"],
+                    "is_owner": int(row["owner_id"]) == int(user_id),
                 }
                 for row in rows
             ]
@@ -767,7 +833,7 @@ def list_documents():
 @app.get("/api/documents/<int:document_id>/download")
 @login_required
 def download_document(document_id):
-    user_id = session["user_id"]
+    user_id = int(session["user_id"])
     connection = get_db()
 
     try:
@@ -883,6 +949,203 @@ def file_too_large(_exception):
     )
 
 
+# ---------------- LIST DOCUMENT SHARES ----------------
+
+@app.get("/api/documents/<int:document_id>/share")
+@login_required
+def list_document_shares(document_id):
+    connection = get_db()
+    actor_id = session["user_id"]
+
+    try:
+        document = connection.execute(
+            "SELECT id FROM documents WHERE id = ? AND owner_id = ?",
+            (document_id, actor_id),
+        ).fetchone()
+
+        if document is None:
+            return error("Document not found or you are not its owner.", 404)
+
+        rows = connection.execute(
+            """
+            SELECT p.user_id, u.email, p.access_level, p.created_at
+            FROM document_permissions AS p
+            JOIN users AS u ON u.id = p.user_id
+            WHERE p.document_id = ?
+            ORDER BY p.created_at DESC, p.user_id
+            """,
+            (document_id,),
+        ).fetchall()
+
+        return jsonify({
+            "shares": [
+                {
+                    "user_id": row["user_id"],
+                    "email": row["email"],
+                    "access_level": row["access_level"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+        })
+    finally:
+        connection.close()
+
+
+# ---------------- SHARE DOCUMENT ----------------
+
+@app.post("/api/documents/<int:document_id>/share")
+@csrf_protected
+@login_required
+def share_document(document_id):
+    data = request.get_json(silent=True) or {}
+    email = data.get("email", "")
+    access_level = data.get("access_level", "read")
+
+    if not isinstance(email, str) or not email.strip():
+        return error("A valid recipient email is required.", 400)
+
+    email = email.strip().lower()
+
+    if access_level not in {"read", "edit"}:
+        return error("Access level must be 'read' or 'edit'.", 400)
+
+    connection = get_db()
+    actor_id = session["user_id"]
+
+    try:
+        document = connection.execute(
+            "SELECT id FROM documents WHERE id = ? AND owner_id = ?",
+            (document_id, actor_id),
+        ).fetchone()
+
+        if document is None:
+            return error("Document not found or you are not its owner.", 404)
+
+        recipient = connection.execute(
+            "SELECT id FROM users WHERE lower(email) = ?",
+            (email,),
+        ).fetchone()
+
+        if recipient is None:
+            return error("No registered user found with that email.", 404)
+
+        if recipient["id"] == actor_id:
+            return error("You cannot share a document with yourself.", 400)
+
+        connection.execute(
+            """
+            INSERT INTO document_permissions
+                (document_id, user_id, access_level, granted_by)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(document_id, user_id)
+            DO UPDATE SET
+                access_level = excluded.access_level,
+                granted_by = excluded.granted_by,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (document_id, recipient["id"], access_level, actor_id),
+        )
+
+        write_audit_log(
+            connection,
+            actor_id=actor_id,
+            action="document_share",
+            outcome="success",
+            document_id=document_id,
+            target_user_id=recipient["id"],
+            details={"access_level": access_level},
+        )
+        connection.commit()
+
+        return jsonify({"message": "Document access updated successfully."}), 200
+
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        return error("Could not update document access.", 400)
+
+    finally:
+        connection.close()
+
+
+# ---------------- REVOKE DOCUMENT ACCESS ----------------
+
+@app.delete("/api/documents/<int:document_id>/share/<int:target_user_id>")
+@csrf_protected
+@login_required
+def revoke_document_access(document_id, target_user_id):
+    connection = get_db()
+    actor_id = int(session["user_id"])
+
+    try:
+        document = connection.execute(
+            "SELECT id FROM documents WHERE id = ? AND owner_id = ?",
+            (document_id, actor_id),
+        ).fetchone()
+
+        if document is None:
+            return error("Document not found or you are not its owner.", 404)
+
+        permission = connection.execute(
+            """
+            SELECT id FROM document_permissions
+            WHERE document_id = ? AND user_id = ?
+            """,
+            (document_id, target_user_id),
+        ).fetchone()
+
+        if permission is None:
+            return error("No sharing permission exists for this user.", 404)
+
+        connection.execute(
+            """
+            DELETE FROM document_permissions
+            WHERE document_id = ? AND user_id = ?
+            """,
+            (document_id, target_user_id),
+        )
+
+        write_audit_log(
+            connection,
+            actor_id=actor_id,
+            action="document_share_revoked",
+            outcome="success",
+            document_id=document_id,
+            target_user_id=target_user_id,
+        )
+        connection.commit()
+
+        return jsonify({"message": "Document access revoked successfully."}), 200
+
+    finally:
+        connection.close()
+
+# ---------------- AUDIT VERIFICATION ----------------
+
+@app.get("/api/audit/verify")
+@login_required
+def audit_verify():
+    connection = get_db()
+
+    try:
+        valid, failed_record_id = verify_audit_chain(connection)
+
+        return jsonify({
+            "valid": valid,
+            "failed_record_id": failed_record_id,
+            "message": (
+                "Audit chain is valid."
+                if valid
+                else "Audit chain verification failed."
+            ),
+        }), 200 if valid else 409
+
+    finally:
+        connection.close()
+
+
+
+
 # ---------------- RUN SERVER ----------------
 
 if __name__ == "__main__":
@@ -891,3 +1154,4 @@ if __name__ == "__main__":
         port=5000,
         debug=False,
     )
+
