@@ -1,0 +1,51 @@
+﻿# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Node and build files
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Python
+.venv/
+**/.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Secrets
+.env
+.env.*
+!.env.example
+server/.env
+
+# Local database
+server/trustvault.db
+server/trustvault.db-*
+*.db-journal
+
+# Backups
+*.before-reset
+
+# Test files
+/downloaded-test.txt
+/test-document.txt
+
+# Backup files
+*.backup
+
+# Uploaded private documents
+server/storage/
